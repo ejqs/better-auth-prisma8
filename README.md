@@ -1,5 +1,8 @@
 # Better Auth adapter for Prisma 8
 
+‼️‼️‼️ Potentially unsafe code. This was AI Generated with Codex Sol 5.6 High and not yet audited for its functions.
+
+
 An experimental PostgreSQL adapter that lets Better Auth use Prisma 8's contract-based ORM directly—without generating or emulating the Prisma 7 `PrismaClient` API.
 
 > Prisma 8 is currently a release candidate. This package targets `@prisma-next/postgres` 0.16.x and Better Auth 1.7.x. Pin versions and read the limitations before deploying it.
