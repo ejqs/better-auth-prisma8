@@ -1,6 +1,6 @@
 {
   "name": "@ejqs/better-auth-prisma8",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "A native Better Auth database adapter for the Prisma 8 contract-based ORM.",
   "type": "module",
   "license": "MIT",
@@ -44,7 +44,6 @@
   "scripts": {
     "build": "tsup",
     "check": "tsc --noEmit",
-    "prepare": "npm run build",
     "test": "vitest run",
     "test:watch": "vitest",
     "prepack": "npm run build && npm run check && npm test"
