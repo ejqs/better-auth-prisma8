@@ -4,7 +4,13 @@ import { resolve } from "node:path";
 
 import { generateModelMap } from "../dist/generator/index.js";
 
-const help = `better-auth-prisma8 generate [options]\n\nOptions:\n  --contract <path>   Prisma 8 emitted contract.json\n  --output <path>     Generated TypeScript file\n  --db-import <path>  Import specifier for your Prisma 8 db module\n  --runtime-import    Adapter runtime import (advanced)\n  -h, --help          Show this help\n`;
+const help = `better-auth-prisma8 generate [options]\n\nOptions:\n  --contract <path>          Prisma 8 emitted contract.json\n  --output <path>            Generated TypeScript file\n  --db-import <specifier>    Import specifier for your Prisma 8 db module\n  --runtime-import <module>  Adapter runtime import (advanced)\n  -h, --help                 Show this help\n`;
+const allowedFlags = new Set([
+  "--contract",
+  "--output",
+  "--db-import",
+  "--runtime-import",
+]);
 
 const args = process.argv.slice(2);
 if (args.length === 0 || args.includes("--help") || args.includes("-h")) {
@@ -20,9 +26,17 @@ if (args.shift() !== "generate") {
 const options = {};
 while (args.length > 0) {
   const flag = args.shift();
+  if (!flag || !allowedFlags.has(flag)) {
+    process.stderr.write(`Unknown option ${flag ?? "argument"}.\n\n${help}`);
+    process.exit(1);
+  }
   const value = args.shift();
-  if (!value || !flag?.startsWith("--")) {
-    process.stderr.write(`Missing value for ${flag ?? "argument"}.\n`);
+  if (!value || value.startsWith("--")) {
+    process.stderr.write(`Missing value for ${flag}.\n`);
+    process.exit(1);
+  }
+  if (Object.hasOwn(options, flag.slice(2))) {
+    process.stderr.write(`Option ${flag} was provided more than once.\n`);
     process.exit(1);
   }
   options[flag.slice(2)] = value;

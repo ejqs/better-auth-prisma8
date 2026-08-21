@@ -39,8 +39,10 @@ export interface Prisma8Collection {
   aggregate(...args: any[]): any;
   create(...args: any[]): any;
   update(...args: any[]): any;
+  updateAll(...args: any[]): any;
   updateCount(...args: any[]): any;
   delete(...args: any[]): any;
+  deleteAll(...args: any[]): any;
   deleteCount(...args: any[]): any;
 }
 
@@ -57,7 +59,7 @@ export interface Prisma8ModelBinding {
   relations?: Record<string, string>;
   /**
    * Native, atomic guarded increment implementation for this model.
-   * Prisma 8 0.16 does not yet expose arithmetic updates through its ORM.
+   * Prisma 8 RC does not yet expose arithmetic updates through its ORM.
    */
   incrementOne?: (input: IncrementOneInput) => Promise<UnknownRecord | null>;
 }

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { applyWhere } from "../src/runtime/where.js";
+import { Prisma8AdapterError } from "../src/runtime/errors.js";
 import { FakeCollection } from "./fake-prisma8.js";
 
 describe("Prisma 8 where conversion", () => {
@@ -33,5 +34,11 @@ describe("Prisma 8 where conversion", () => {
     expect(await applyWhere(new FakeCollection([...rows]), [
       { field: "id", operator: "not_in", value: [] },
     ]).all()).toHaveLength(3);
+  });
+
+  it("rejects a non-array membership value", () => {
+    expect(() => applyWhere(new FakeCollection([...rows]), [
+      { field: "id", operator: "in", value: "1" },
+    ])).toThrow(Prisma8AdapterError);
   });
 });

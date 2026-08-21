@@ -31,8 +31,10 @@ interface Prisma8Collection {
     aggregate(...args: any[]): any;
     create(...args: any[]): any;
     update(...args: any[]): any;
+    updateAll(...args: any[]): any;
     updateCount(...args: any[]): any;
     delete(...args: any[]): any;
+    deleteAll(...args: any[]): any;
     deleteCount(...args: any[]): any;
 }
 interface IncrementOneInput {
@@ -47,7 +49,7 @@ interface Prisma8ModelBinding {
     relations?: Record<string, string>;
     /**
      * Native, atomic guarded increment implementation for this model.
-     * Prisma 8 0.16 does not yet expose arithmetic updates through its ORM.
+     * Prisma 8 RC does not yet expose arithmetic updates through its ORM.
      */
     incrementOne?: (input: IncrementOneInput) => Promise<UnknownRecord | null>;
 }
@@ -63,7 +65,7 @@ interface Prisma8AdapterConfig {
     transaction?: Prisma8TransactionRunner;
 }
 
-declare function prisma8Adapter(models: Prisma8ModelMap, config?: Prisma8AdapterConfig): (betterAuthOptions: BetterAuthOptions) => DBAdapter<BetterAuthOptions>;
+declare function prisma8Adapter(models: Prisma8ModelMap, config?: Prisma8AdapterConfig): (betterAuthOptions: BetterAuthOptions) => DBAdapter;
 declare function definePrisma8Models<const Models extends Prisma8ModelMap>(models: Models): Models;
 
 declare class Prisma8AdapterError extends Error {

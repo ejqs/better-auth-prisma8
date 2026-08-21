@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   Prisma8AdapterCapabilityError,
+  Prisma8AdapterError,
   prisma8Adapter,
 } from "../src/runtime/index.js";
 import { FakeCollection } from "./fake-prisma8.js";
@@ -50,6 +51,66 @@ describe("prisma8Adapter", () => {
       model: "user",
       where: [{ field: "email", operator: "contains", value: "d@" }],
     })).toBe(1);
+  });
+
+  it("honors an explicit zero limit", async () => {
+    const adapter = prisma8Adapter({
+      user: new FakeCollection([{ id: "1" }, { id: "2" }]),
+    })(options);
+
+    expect(await adapter.findMany({ model: "user", limit: 0 })).toEqual([]);
+  });
+
+  it("resolves generated model names without trusting inherited properties", async () => {
+    const adapter = prisma8Adapter({
+      User: new FakeCollection([{ id: "1", email: "a@example.com" }]),
+    })(options);
+    expect(await adapter.findOne<{ id: string }>({
+      model: "user",
+      where: [{ field: "id", value: "1" }],
+    })).toMatchObject({ id: "1" });
+
+    const inherited = Object.create({
+      user: new FakeCollection([{ id: "inherited" }]),
+    }) as Record<string, FakeCollection>;
+    const inheritedAdapter = prisma8Adapter(inherited)(options);
+    await expect(inheritedAdapter.findOne({
+      model: "user",
+      where: [{ field: "id", value: "inherited" }],
+    })).rejects.toBeInstanceOf(Prisma8AdapterError);
+  });
+
+  it("uses case-insensitive relation mappings without mutating Prisma rows", async () => {
+    const rows = [{
+      id: "1",
+      sessions: [{ id: "session-1", userId: "1" }],
+    }];
+    const adapter = prisma8Adapter({
+      User: {
+        collection: new FakeCollection(rows),
+        relations: { Session: "sessions" },
+      },
+      Session: new FakeCollection([]),
+    })({
+      ...options,
+      advanced: { database: { joins: true } },
+    });
+
+    const user = await adapter.findOne<{ session: Array<{ id: string }> }>({
+      model: "user",
+      where: [{ field: "id", value: "1" }],
+      join: { session: true },
+    });
+    expect(user?.session).toEqual([{ id: "session-1", userId: "1" }]);
+    expect(rows[0]).not.toHaveProperty("session");
+    expect(rows[0]).toHaveProperty("sessions");
+  });
+
+  it("rejects unsafe pagination values", async () => {
+    const adapter = prisma8Adapter({ user: new FakeCollection([{ id: "1" }]) })(options);
+    await expect(adapter.findMany({ model: "user", limit: -1 })).rejects.toBeInstanceOf(
+      Prisma8AdapterError,
+    );
   });
 
   it("atomically consumes only one matching row", async () => {
