@@ -3,7 +3,6 @@ import type {
   CleanedWhere,
   CustomAdapter,
   DBAdapter,
-  DBAdapterInstance,
 } from "better-auth/adapters";
 import type { BetterAuthOptions, JoinConfig, Where } from "better-auth";
 
@@ -20,18 +19,64 @@ import type {
   UnknownRecord,
 } from "./types.js";
 
+function isObject(value: unknown): value is Record<PropertyKey, unknown> {
+  return (typeof value === "object" && value !== null) || typeof value === "function";
+}
+
 function isBinding(value: Prisma8ModelBinding | Prisma8Collection): value is Prisma8ModelBinding {
-  return "collection" in value;
+  return isObject(value) && Object.hasOwn(value, "collection");
+}
+
+function ownValue<T>(values: Record<string, T>, key: string): T | undefined {
+  return Object.hasOwn(values, key) ? values[key] : undefined;
+}
+
+function caseInsensitiveOwnValue<T>(
+  values: Record<string, T>,
+  key: string,
+  kind: string,
+): T | undefined {
+  const exact = ownValue(values, key);
+  if (exact !== undefined) return exact;
+
+  const matches = Object.keys(values).filter(
+    (candidate) => candidate.toLowerCase() === key.toLowerCase(),
+  );
+  if (matches.length > 1) {
+    throw new Prisma8AdapterError(
+      `Ambiguous ${kind} ${key}; matching keys differ only by letter case.`,
+    );
+  }
+  return matches[0] ? ownValue(values, matches[0]) : undefined;
 }
 
 function resolveBinding(models: Prisma8ModelMap, model: string): Prisma8ModelBinding {
-  const value = models[model] ?? models[model.toLowerCase()];
+  const value = caseInsensitiveOwnValue(models, model, "model");
   if (!value) {
     throw new Prisma8AdapterError(
       `Model ${model} is not mapped. Regenerate the model map or add it manually.`,
     );
   }
   return isBinding(value) ? value : { collection: value };
+}
+
+function resolveRelation(binding: Prisma8ModelBinding, joinedModel: string): string | undefined {
+  return binding.relations
+    ? caseInsensitiveOwnValue(binding.relations, joinedModel, "relation")
+    : undefined;
+}
+
+function assertNonNegativeInteger(value: number, name: string): void {
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new Prisma8AdapterError(`${name} must be a non-negative safe integer.`);
+  }
+}
+
+function affectedRowCount(value: unknown, operation: string): number {
+  if (!Array.isArray(value)) {
+    throw new Prisma8AdapterError(`${operation} did not return an array of affected rows.`);
+  }
+  return value.length;
 }
 
 function applySelect(collection: Prisma8Collection, select?: string[]): Prisma8Collection {
@@ -46,40 +91,44 @@ function applyJoin(
   const renames = new Map<string, string>();
   let query = collection;
   for (const [joinedModel, config] of Object.entries(join ?? {})) {
-    const relation = binding.relations?.[joinedModel];
+    const relation = resolveRelation(binding, joinedModel);
     if (!relation) {
       throw new Prisma8AdapterCapabilityError(
         `Join ${joinedModel} is not mapped for this model. Regenerate the model map or configure relations manually.`,
       );
     }
-    query = query.include(
-      relation,
-      config.limit
-        ? (related: Prisma8Collection) => related.take(config.limit!)
-        : undefined,
-    );
+    const limit = config.limit ?? 100;
+    assertNonNegativeInteger(limit, `Join limit for ${joinedModel}`);
+    query = query.include(relation, (related: Prisma8Collection) => related.take(limit));
     renames.set(relation, joinedModel);
   }
   return { collection: query, renames };
 }
 
 function renameJoins(row: UnknownRecord, renames: Map<string, string>): UnknownRecord {
+  if (renames.size === 0) return row;
+  const renamed = { ...row };
   for (const [relation, joinedModel] of renames) {
-    if (relation !== joinedModel && relation in row) {
-      row[joinedModel] = row[relation];
-      delete row[relation];
+    if (relation !== joinedModel && Object.hasOwn(renamed, relation)) {
+      Object.defineProperty(renamed, joinedModel, {
+        configurable: true,
+        enumerable: true,
+        value: renamed[relation],
+        writable: true,
+      });
+      delete renamed[relation];
     }
   }
-  return row;
+  return renamed;
 }
 
-function createFactory(
+function createAdapter(
   models: Prisma8ModelMap,
   config: Prisma8AdapterConfig,
-  getOptions: () => BetterAuthOptions | null,
+  options: BetterAuthOptions,
   inTransaction = false,
-): DBAdapterInstance {
-  return createAdapterFactory({
+): DBAdapter {
+  const factory = createAdapterFactory({
     config: {
       adapterId: "prisma-8",
       adapterName: "Prisma 8 Adapter",
@@ -95,14 +144,12 @@ function createFactory(
         !inTransaction && config.transaction
           ? async (callback) =>
               config.transaction!(async (transactionModels) => {
-                const options = getOptions();
-                if (!options) throw new Prisma8AdapterError("Adapter options are not initialized.");
-                const transactionAdapter: DBAdapter = createFactory(
+                const transactionAdapter = createAdapter(
                   transactionModels,
                   config,
-                  getOptions,
+                  options,
                   true,
-                )(options);
+                );
                 return callback(transactionAdapter);
               })
           : false,
@@ -167,8 +214,10 @@ function createFactory(
             return sortBy.direction === "desc" ? field.desc() : field.asc();
           });
         }
-        if (offset) query = query.skip(offset);
-        if (limit) query = query.take(limit);
+        assertNonNegativeInteger(offset ?? 0, "Offset");
+        assertNonNegativeInteger(limit, "Limit");
+        if (offset !== undefined) query = query.skip(offset);
+        query = query.take(limit);
         const joined = applyJoin(binding, query, join);
         const rows = await joined.collection.all();
         return (rows as UnknownRecord[]).map(
@@ -203,7 +252,8 @@ function createFactory(
       async updateMany({ model, where, update }) {
         if (!where.length) return 0;
         const binding = resolveBinding(models, model);
-        return applyWhere(binding.collection, where).updateCount(update);
+        const rows = await applyWhere(binding.collection, where).updateAll(update);
+        return affectedRowCount(rows, "updateMany");
       },
 
       async delete({ model, where }) {
@@ -215,7 +265,8 @@ function createFactory(
       async deleteMany({ model, where }) {
         if (!where.length) return 0;
         const binding = resolveBinding(models, model);
-        return applyWhere(binding.collection, where).deleteCount();
+        const rows = await applyWhere(binding.collection, where).deleteAll();
+        return affectedRowCount(rows, "deleteMany");
       },
 
       async consumeOne<T>({ model, where }: { model: string; where: Where[] }) {
@@ -249,18 +300,15 @@ function createFactory(
       options: config,
     }),
   });
+  return factory(options);
 }
 
 export function prisma8Adapter(
   models: Prisma8ModelMap,
   config: Prisma8AdapterConfig = {},
 ) {
-  let options: BetterAuthOptions | null = null;
-  const factory = createFactory(models, config, () => options);
-  return (betterAuthOptions: BetterAuthOptions) => {
-    options = betterAuthOptions;
-    return factory(betterAuthOptions);
-  };
+  return (betterAuthOptions: BetterAuthOptions) =>
+    createAdapter(models, config, betterAuthOptions);
 }
 
 export function definePrisma8Models<const Models extends Prisma8ModelMap>(models: Models): Models {

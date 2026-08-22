@@ -10,7 +10,7 @@ var Prisma8AdapterCapabilityError = class extends Prisma8AdapterError {
 };
 
 // src/runtime/where.ts
-import { all, and, not, or } from "@prisma-next/sql-orm-client";
+import { all, and, not, or } from "@prisma/orm-postgres/orm-client";
 var escapeLike = (value) => value.replaceAll("\\", "\\\\").replaceAll("%", "\\%").replaceAll("_", "\\_");
 function fieldAccessor(fields, condition) {
   const field = fields[condition.field];
@@ -25,32 +25,48 @@ function conditionToPrisma8(fields, condition) {
   const field = fieldAccessor(fields, condition);
   const operator = condition.operator ?? "eq";
   const insensitive = condition.mode === "insensitive" && typeof condition.value === "string";
-  if (operator === "eq") {
-    if (condition.value === null) return field.isNull();
-    if (insensitive) return field.ilike(escapeLike(condition.value));
-    return field.eq(condition.value);
-  }
-  if (operator === "ne") {
-    if (condition.value === null) return field.isNotNull();
-    if (insensitive) return not(field.ilike(escapeLike(condition.value)));
-    return field.neq(condition.value);
-  }
-  if (operator === "in" || operator === "not_in") {
-    const values = Array.isArray(condition.value) ? condition.value : [];
-    if (values.length === 0) return operator === "in" ? not(all()) : all();
-    return operator === "in" ? field.in(values) : field.notIn(values);
-  }
-  if (operator === "contains" || operator === "starts_with" || operator === "ends_with") {
-    if (typeof condition.value !== "string") {
-      throw new Prisma8AdapterError(
-        `${operator} requires a string value for ${condition.field}.`
-      );
+  switch (operator) {
+    case "eq":
+      if (condition.value === null) return field.isNull();
+      if (insensitive) return field.ilike(escapeLike(condition.value));
+      return field.eq(condition.value);
+    case "ne":
+      if (condition.value === null) return field.isNotNull();
+      if (insensitive) return not(field.ilike(escapeLike(condition.value)));
+      return field.neq(condition.value);
+    case "in":
+    case "not_in": {
+      if (!Array.isArray(condition.value)) {
+        throw new Prisma8AdapterError(
+          `${operator} requires an array value for ${condition.field}.`
+        );
+      }
+      if (condition.value.length === 0) return operator === "in" ? not(all()) : all();
+      return operator === "in" ? field.in(condition.value) : field.notIn(condition.value);
     }
-    const escaped = escapeLike(condition.value);
-    const pattern = operator === "contains" ? `%${escaped}%` : operator === "starts_with" ? `${escaped}%` : `%${escaped}`;
-    return condition.mode === "insensitive" ? field.ilike(pattern) : field.like(pattern);
+    case "contains":
+    case "starts_with":
+    case "ends_with": {
+      if (typeof condition.value !== "string") {
+        throw new Prisma8AdapterError(
+          `${operator} requires a string value for ${condition.field}.`
+        );
+      }
+      const escaped = escapeLike(condition.value);
+      const pattern = operator === "contains" ? `%${escaped}%` : operator === "starts_with" ? `${escaped}%` : `%${escaped}`;
+      return condition.mode === "insensitive" ? field.ilike(pattern) : field.like(pattern);
+    }
+    case "lt":
+      return field.lt(condition.value);
+    case "lte":
+      return field.lte(condition.value);
+    case "gt":
+      return field.gt(condition.value);
+    case "gte":
+      return field.gte(condition.value);
+    default:
+      throw new Prisma8AdapterError(`Unsupported where operator ${String(operator)}.`);
   }
-  return field[operator](condition.value);
 }
 function applyWhere(collection, where) {
   if (!where?.length) return collection;
@@ -64,17 +80,50 @@ function applyWhere(collection, where) {
 }
 
 // src/runtime/adapter.ts
+function isObject(value) {
+  return typeof value === "object" && value !== null || typeof value === "function";
+}
 function isBinding(value) {
-  return "collection" in value;
+  return isObject(value) && Object.hasOwn(value, "collection");
+}
+function ownValue(values, key) {
+  return Object.hasOwn(values, key) ? values[key] : void 0;
+}
+function caseInsensitiveOwnValue(values, key, kind) {
+  const exact = ownValue(values, key);
+  if (exact !== void 0) return exact;
+  const matches = Object.keys(values).filter(
+    (candidate) => candidate.toLowerCase() === key.toLowerCase()
+  );
+  if (matches.length > 1) {
+    throw new Prisma8AdapterError(
+      `Ambiguous ${kind} ${key}; matching keys differ only by letter case.`
+    );
+  }
+  return matches[0] ? ownValue(values, matches[0]) : void 0;
 }
 function resolveBinding(models, model) {
-  const value = models[model] ?? models[model.toLowerCase()];
+  const value = caseInsensitiveOwnValue(models, model, "model");
   if (!value) {
     throw new Prisma8AdapterError(
       `Model ${model} is not mapped. Regenerate the model map or add it manually.`
     );
   }
   return isBinding(value) ? value : { collection: value };
+}
+function resolveRelation(binding, joinedModel) {
+  return binding.relations ? caseInsensitiveOwnValue(binding.relations, joinedModel, "relation") : void 0;
+}
+function assertNonNegativeInteger(value, name) {
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new Prisma8AdapterError(`${name} must be a non-negative safe integer.`);
+  }
+}
+function affectedRowCount(value, operation) {
+  if (!Array.isArray(value)) {
+    throw new Prisma8AdapterError(`${operation} did not return an array of affected rows.`);
+  }
+  return value.length;
 }
 function applySelect(collection, select) {
   return select?.length ? collection.select(...select) : collection;
@@ -83,31 +132,37 @@ function applyJoin(binding, collection, join) {
   const renames = /* @__PURE__ */ new Map();
   let query = collection;
   for (const [joinedModel, config] of Object.entries(join ?? {})) {
-    const relation = binding.relations?.[joinedModel];
+    const relation = resolveRelation(binding, joinedModel);
     if (!relation) {
       throw new Prisma8AdapterCapabilityError(
         `Join ${joinedModel} is not mapped for this model. Regenerate the model map or configure relations manually.`
       );
     }
-    query = query.include(
-      relation,
-      config.limit ? (related) => related.take(config.limit) : void 0
-    );
+    const limit = config.limit ?? 100;
+    assertNonNegativeInteger(limit, `Join limit for ${joinedModel}`);
+    query = query.include(relation, (related) => related.take(limit));
     renames.set(relation, joinedModel);
   }
   return { collection: query, renames };
 }
 function renameJoins(row, renames) {
+  if (renames.size === 0) return row;
+  const renamed = { ...row };
   for (const [relation, joinedModel] of renames) {
-    if (relation !== joinedModel && relation in row) {
-      row[joinedModel] = row[relation];
-      delete row[relation];
+    if (relation !== joinedModel && Object.hasOwn(renamed, relation)) {
+      Object.defineProperty(renamed, joinedModel, {
+        configurable: true,
+        enumerable: true,
+        value: renamed[relation],
+        writable: true
+      });
+      delete renamed[relation];
     }
   }
-  return row;
+  return renamed;
 }
-function createFactory(models, config, getOptions, inTransaction = false) {
-  return createAdapterFactory({
+function createAdapter(models, config, options, inTransaction = false) {
+  const factory = createAdapterFactory({
     config: {
       adapterId: "prisma-8",
       adapterName: "Prisma 8 Adapter",
@@ -120,14 +175,12 @@ function createFactory(models, config, getOptions, inTransaction = false) {
       supportsNumericIds: config.supportsNumericIds ?? true,
       supportsUUIDs: config.supportsUUIDs ?? true,
       transaction: !inTransaction && config.transaction ? async (callback) => config.transaction(async (transactionModels) => {
-        const options = getOptions();
-        if (!options) throw new Prisma8AdapterError("Adapter options are not initialized.");
-        const transactionAdapter = createFactory(
+        const transactionAdapter = createAdapter(
           transactionModels,
           config,
-          getOptions,
+          options,
           true
-        )(options);
+        );
         return callback(transactionAdapter);
       }) : false
     },
@@ -172,8 +225,10 @@ function createFactory(models, config, getOptions, inTransaction = false) {
             return sortBy.direction === "desc" ? field.desc() : field.asc();
           });
         }
-        if (offset) query = query.skip(offset);
-        if (limit) query = query.take(limit);
+        assertNonNegativeInteger(offset ?? 0, "Offset");
+        assertNonNegativeInteger(limit, "Limit");
+        if (offset !== void 0) query = query.skip(offset);
+        query = query.take(limit);
         const joined = applyJoin(binding, query, join);
         const rows = await joined.collection.all();
         return rows.map(
@@ -201,7 +256,8 @@ function createFactory(models, config, getOptions, inTransaction = false) {
       async updateMany({ model, where, update }) {
         if (!where.length) return 0;
         const binding = resolveBinding(models, model);
-        return applyWhere(binding.collection, where).updateCount(update);
+        const rows = await applyWhere(binding.collection, where).updateAll(update);
+        return affectedRowCount(rows, "updateMany");
       },
       async delete({ model, where }) {
         if (!where.length) return;
@@ -211,7 +267,8 @@ function createFactory(models, config, getOptions, inTransaction = false) {
       async deleteMany({ model, where }) {
         if (!where.length) return 0;
         const binding = resolveBinding(models, model);
-        return applyWhere(binding.collection, where).deleteCount();
+        const rows = await applyWhere(binding.collection, where).deleteAll();
+        return affectedRowCount(rows, "deleteMany");
       },
       async consumeOne({ model, where }) {
         if (!where.length) return null;
@@ -237,14 +294,10 @@ function createFactory(models, config, getOptions, inTransaction = false) {
       options: config
     })
   });
+  return factory(options);
 }
 function prisma8Adapter(models, config = {}) {
-  let options = null;
-  const factory = createFactory(models, config, () => options);
-  return (betterAuthOptions) => {
-    options = betterAuthOptions;
-    return factory(betterAuthOptions);
-  };
+  return (betterAuthOptions) => createAdapter(models, config, betterAuthOptions);
 }
 function definePrisma8Models(models) {
   return models;

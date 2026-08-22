@@ -1,4 +1,4 @@
-import { all, and, not, or } from "@prisma-next/sql-orm-client";
+import { all, and, not, or } from "@prisma/orm-postgres/orm-client";
 import type { Where } from "better-auth";
 
 import { Prisma8AdapterError } from "./errors.js";
@@ -33,41 +33,53 @@ export function conditionToPrisma8(
   const insensitive =
     condition.mode === "insensitive" && typeof condition.value === "string";
 
-  if (operator === "eq") {
-    if (condition.value === null) return field.isNull();
-    if (insensitive) return field.ilike(escapeLike(condition.value as string));
-    return field.eq(condition.value);
-  }
-
-  if (operator === "ne") {
-    if (condition.value === null) return field.isNotNull();
-    if (insensitive) return not(field.ilike(escapeLike(condition.value as string)) as never);
-    return field.neq(condition.value);
-  }
-
-  if (operator === "in" || operator === "not_in") {
-    const values = Array.isArray(condition.value) ? condition.value : [];
-    if (values.length === 0) return operator === "in" ? not(all()) : all();
-    return operator === "in" ? field.in(values) : field.notIn(values);
-  }
-
-  if (operator === "contains" || operator === "starts_with" || operator === "ends_with") {
-    if (typeof condition.value !== "string") {
-      throw new Prisma8AdapterError(
-        `${operator} requires a string value for ${condition.field}.`,
-      );
+  switch (operator) {
+    case "eq":
+      if (condition.value === null) return field.isNull();
+      if (insensitive) return field.ilike(escapeLike(condition.value as string));
+      return field.eq(condition.value);
+    case "ne":
+      if (condition.value === null) return field.isNotNull();
+      if (insensitive) return not(field.ilike(escapeLike(condition.value as string)) as never);
+      return field.neq(condition.value);
+    case "in":
+    case "not_in": {
+      if (!Array.isArray(condition.value)) {
+        throw new Prisma8AdapterError(
+          `${operator} requires an array value for ${condition.field}.`,
+        );
+      }
+      if (condition.value.length === 0) return operator === "in" ? not(all()) : all();
+      return operator === "in" ? field.in(condition.value) : field.notIn(condition.value);
     }
-    const escaped = escapeLike(condition.value);
-    const pattern =
-      operator === "contains"
-        ? `%${escaped}%`
-        : operator === "starts_with"
-          ? `${escaped}%`
-          : `%${escaped}`;
-    return condition.mode === "insensitive" ? field.ilike(pattern) : field.like(pattern);
+    case "contains":
+    case "starts_with":
+    case "ends_with": {
+      if (typeof condition.value !== "string") {
+        throw new Prisma8AdapterError(
+          `${operator} requires a string value for ${condition.field}.`,
+        );
+      }
+      const escaped = escapeLike(condition.value);
+      const pattern =
+        operator === "contains"
+          ? `%${escaped}%`
+          : operator === "starts_with"
+            ? `${escaped}%`
+            : `%${escaped}`;
+      return condition.mode === "insensitive" ? field.ilike(pattern) : field.like(pattern);
+    }
+    case "lt":
+      return field.lt(condition.value);
+    case "lte":
+      return field.lte(condition.value);
+    case "gt":
+      return field.gt(condition.value);
+    case "gte":
+      return field.gte(condition.value);
+    default:
+      throw new Prisma8AdapterError(`Unsupported where operator ${String(operator)}.`);
   }
-
-  return field[operator](condition.value);
 }
 
 export function applyWhere(

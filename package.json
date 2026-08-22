@@ -49,20 +49,19 @@
     "prepack": "npm run build && npm run check && npm test"
   },
   "peerDependencies": {
-    "@prisma-next/postgres": ">=0.16.0 <1",
+    "@prisma/orm-postgres": ">=8.0.0-rc.4 <9",
     "better-auth": ">=1.7.1 <2"
   },
-  "dependencies": {
-    "@prisma-next/sql-orm-client": "^0.16.0"
-  },
   "devDependencies": {
-    "@prisma-next/postgres": "0.16.0",
-    "@prisma-next/sql-orm-client": "0.16.0",
+    "@prisma/orm-postgres": "8.0.0-rc.4",
     "@types/node": "^24.0.0",
     "better-auth": "1.7.1",
     "tsup": "^8.5.0",
     "typescript": "^5.9.0",
     "vitest": "^4.0.0"
+  },
+  "overrides": {
+    "esbuild": "^0.28.1"
   },
   "engines": {
     "node": ">=24"

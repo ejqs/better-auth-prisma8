@@ -1,18 +1,21 @@
 # Better Auth adapter for Prisma 8
 
-‼️‼️‼️ Potentially unsafe code. This was AI Generated with Codex Sol 5.6 High and not yet audited for its functions.
-
-
 An experimental PostgreSQL adapter that lets Better Auth use Prisma 8's contract-based ORM directly—without generating or emulating the Prisma 7 `PrismaClient` API.
 
-> Prisma 8 is currently a release candidate. This package targets `@prisma-next/postgres` 0.16.x and Better Auth 1.7.x. Pin versions and read the limitations before deploying it.
+> Prisma 8 is currently a release candidate. This package targets `@prisma/orm-postgres` 8.0.0 RC and Better Auth 1.7.x. Pin versions and read the limitations before deploying it.
+
+## Audit status
+
+The adapter received a functionality and security review on August 21, 2026. Its unit suite covers CRUD, filters, pagination, generated mappings, guarded mutations, and fail-closed edge cases. The review also verifies the distributable package build and dependency audit.
+
+This remains experimental software: the tests use a behavioral Prisma collection fake rather than a live PostgreSQL integration environment, Prisma 8 is pre-release, and atomic numeric increments still require an application-provided hook.
 
 ## Install from GitHub
 
 The package is ready to install directly from this repository:
 
 ```bash
-npm install github:ejqs/better-auth-prisma8 better-auth@^1.7.1 @prisma-next/postgres@^0.16.0
+npm install github:ejqs/better-auth-prisma8 better-auth@^1.7.1 @prisma/orm-postgres@8.0.0-rc.4
 ```
 
 ## Generate the model map
@@ -20,7 +23,7 @@ npm install github:ejqs/better-auth-prisma8 better-auth@^1.7.1 @prisma-next/post
 First emit Prisma 8's contract after changing your schema:
 
 ```bash
-npx prisma-next contract emit
+npx @prisma/cli@next contract emit
 ```
 
 Then generate the Better Auth model map:
@@ -103,7 +106,7 @@ export const database = prisma8Adapter(models);
 
 ### Guarded numeric increments
 
-Better Auth 1.7 requires an atomic `incrementOne` primitive. Prisma 8 0.16's public ORM can update literal values but does not expose arithmetic field updates. The adapter therefore refuses to fake this with a read-then-write race.
+Better Auth 1.7 requires an atomic `incrementOne` primitive. Prisma 8 RC's public ORM can update literal values but does not expose arithmetic field updates. The adapter therefore refuses to fake this with a read-then-write race.
 
 If a Better Auth plugin uses guarded counters, provide a native atomic hook for that model:
 

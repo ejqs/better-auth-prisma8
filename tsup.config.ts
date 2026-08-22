@@ -11,5 +11,5 @@ export default defineConfig({
   sourcemap: true,
   clean: true,
   splitting: false,
-  external: ["better-auth", "@prisma-next/postgres"],
+  external: ["better-auth", "@prisma/orm-postgres"],
 });

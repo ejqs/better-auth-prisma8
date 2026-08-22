@@ -140,6 +140,11 @@ export class FakeCollection implements Prisma8Collection {
     Object.assign(row, data);
     return Promise.resolve(row);
   }
+  updateAll(data: UnknownRecord): Promise<UnknownRecord[]> {
+    const rows = this.filtered();
+    rows.forEach((row) => Object.assign(row, data));
+    return Promise.resolve(rows);
+  }
   updateCount(data: UnknownRecord): Promise<number> {
     const rows = this.filtered();
     rows.forEach((row) => Object.assign(row, data));
@@ -150,6 +155,11 @@ export class FakeCollection implements Prisma8Collection {
     if (!row) return Promise.resolve(null);
     this.rows.splice(this.rows.indexOf(row), 1);
     return Promise.resolve(row);
+  }
+  deleteAll(): Promise<UnknownRecord[]> {
+    const rows = this.filtered();
+    rows.forEach((row) => this.rows.splice(this.rows.indexOf(row), 1));
+    return Promise.resolve(rows);
   }
   deleteCount(): Promise<number> {
     const rows = this.filtered();

@@ -7,14 +7,53 @@ import type {
   Prisma8ContractModel,
 } from "./types.js";
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function ownValue<T>(values: Record<string, T>, key: string): T | undefined {
+  return Object.hasOwn(values, key) ? values[key] : undefined;
+}
+
 function assertContract(value: unknown): asserts value is Prisma8ContractJson {
-  if (
-    !value ||
-    typeof value !== "object" ||
-    !("roots" in value) ||
-    !("domain" in value)
-  ) {
+  if (!isRecord(value) || !isRecord(value.roots) || !isRecord(value.domain)) {
     throw new Error("The file is not a supported Prisma 8 contract.json.");
+  }
+
+  const namespaces = value.domain.namespaces;
+  if (!isRecord(namespaces)) {
+    throw new Error("The file is not a supported Prisma 8 contract.json.");
+  }
+
+  for (const root of Object.values(value.roots)) {
+    if (!isRecord(root) || typeof root.model !== "string" || typeof root.namespace !== "string") {
+      throw new Error("The file is not a supported Prisma 8 contract.json.");
+    }
+  }
+
+  for (const namespace of Object.values(namespaces)) {
+    if (!isRecord(namespace) || !isRecord(namespace.models)) {
+      throw new Error("The file is not a supported Prisma 8 contract.json.");
+    }
+    for (const model of Object.values(namespace.models)) {
+      if (!isRecord(model)) {
+        throw new Error("The file is not a supported Prisma 8 contract.json.");
+      }
+      if (model.relations === undefined) continue;
+      if (!isRecord(model.relations)) {
+        throw new Error("The file is not a supported Prisma 8 contract.json.");
+      }
+      for (const relation of Object.values(model.relations)) {
+        if (
+          !isRecord(relation) ||
+          !isRecord(relation.to) ||
+          typeof relation.to.model !== "string" ||
+          typeof relation.to.namespace !== "string"
+        ) {
+          throw new Error("The file is not a supported Prisma 8 contract.json.");
+        }
+      }
+    }
   }
 }
 
@@ -22,7 +61,7 @@ function relationMap(
   contract: Prisma8ContractJson,
   model: Prisma8ContractModel | undefined,
 ): Record<string, string> {
-  const relations: Record<string, string> = {};
+  const relations: Record<string, string> = Object.create(null) as Record<string, string>;
   for (const [relationName, relation] of Object.entries(model?.relations ?? {})) {
     const root = Object.entries(contract.roots).find(
       ([, candidate]) =>
@@ -42,12 +81,13 @@ export function renderModelMap(
   const entries = Object.entries(contract.roots)
     .sort(([left], [right]) => left.localeCompare(right))
     .map(([rootName, root]) => {
-      const model = contract.domain.namespaces[root.namespace]?.models[root.model];
+      const namespace = ownValue(contract.domain.namespaces, root.namespace);
+      const model = namespace ? ownValue(namespace.models, root.model) : undefined;
       const relations = relationMap(contract, model);
       const relationCode = Object.keys(relations).length
         ? `, relations: ${JSON.stringify(relations)}`
         : "";
-      return `    ${JSON.stringify(rootName)}: { collection: client.orm[${JSON.stringify(root.namespace)}][${JSON.stringify(root.model)}]${relationCode} },`;
+      return `    [${JSON.stringify(rootName)}]: { collection: client.orm[${JSON.stringify(root.namespace)}][${JSON.stringify(root.model)}]${relationCode} },`;
     })
     .join("\n");
 
